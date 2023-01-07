@@ -2,8 +2,11 @@ package net.virgis.tutorials.stockmarketapp.data.repository
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import net.virgis.tutorials.stockmarketapp.data.csv.CSVParser
+import net.virgis.tutorials.stockmarketapp.data.csv.CompanyListingsParser
 import net.virgis.tutorials.stockmarketapp.data.local.StockDatabase
 import net.virgis.tutorials.stockmarketapp.data.mapper.toCompanyListing
+import net.virgis.tutorials.stockmarketapp.data.mapper.toCompanyListingEntity
 import net.virgis.tutorials.stockmarketapp.data.remote.StockApi
 import net.virgis.tutorials.stockmarketapp.domain.model.CompanyListing
 import net.virgis.tutorials.stockmarketapp.domain.repository.StockRepository
@@ -16,7 +19,8 @@ import javax.inject.Singleton
 @Singleton
 class StockRepositoryImpl @Inject constructor(
     val api: StockApi,
-    val db: StockDatabase
+    val db: StockDatabase,
+    val companyListingsParser: CSVParser<CompanyListing>
 ): StockRepository {
 
     private val dao = db.dao
@@ -40,17 +44,30 @@ class StockRepositoryImpl @Inject constructor(
             }
             val remoteListings = try {
                 val response = api.getListings()
-
+                companyListingsParser.parse(response.byteStream())
             } catch(e: IOException) {
                 e.printStackTrace()
                 emit(Resource.Error("Could not load data from remote source"))
                 emit(Resource.Loading(false))
-                return@flow
+                null
             } catch (e: HttpException) {
                 e.printStackTrace()
                 emit(Resource.Error("Server error"))
                 emit(Resource.Loading(false))
-                return@flow
+                null
+            }
+
+            remoteListings?.let { listings ->
+                dao.clearCompanyListings()
+                dao.insertCompanyListings(
+                    listings.map { it.toCompanyListingEntity() }
+                )
+                emit(Resource.Success(
+                    data = dao
+                        .searchCompanyListing("")
+                        .map { it.toCompanyListing() }
+                ))
+                emit(Resource.Loading(false))
             }
         }
     }
